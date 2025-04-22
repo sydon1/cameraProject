@@ -1,0 +1,6 @@
+dependencies:
+  esp32-camera:
+    version: "~2.0.0"
+  idf:
+    version: ">=4.4.0"
+
