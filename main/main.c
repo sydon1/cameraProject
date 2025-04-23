@@ -427,7 +427,7 @@ void app_main(void) {
     
     // Keep the main task alive
     while(1) {
-        sendTestGrid();
+        //sendTestGrid();
         vTaskDelay(500 / portTICK_PERIOD_MS);
     }
 #else
