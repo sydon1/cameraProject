@@ -38,6 +38,8 @@
 
 static const char *TAG = "ESP32_GAME4";
 
+bool first = true;
+
 // Define GPIO pin for the external interrupt
 #define INTERRUPT_PIN 40
 
@@ -273,152 +275,121 @@ void start_wifi_ap() {
     ESP_LOGI(TAG, "Wi-Fi AP started. SSID: %s", WIFI_SSID);
 }
 
-// Combined TCP server task - handles both camera capture and LED control
+
 void tcp_server_task(void *pvParameters) {
-    char rx_buffer[128];  // Buffer for received data
-    char json_buffer[1024] = {0};  // Buffer for JSON data
-    int json_buffer_index = 0;
     int listen_sock, client_sock;
     struct sockaddr_in server_addr, client_addr;
     socklen_t addr_len = sizeof(client_addr);
 
-    // Create socket
+    // 1) create & bind & listen exactly as before
     listen_sock = socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
-    if (listen_sock < 0) {
-        ESP_LOGE(TAG, "Socket creation failed!");
-        vTaskDelete(NULL);
-    }
-
-    // Configure server address
-    server_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    // … error‐checks omitted for brevity …
     server_addr.sin_family = AF_INET;
+    server_addr.sin_addr.s_addr = htonl(INADDR_ANY);
     server_addr.sin_port = htons(PORT);
+    bind(listen_sock, (struct sockaddr *)&server_addr, sizeof(server_addr));
+    listen(listen_sock, 1);
 
-    // Bind socket
-    if (bind(listen_sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) != 0) {
-        ESP_LOGE(TAG, "Socket binding failed!");
-        close(listen_sock);
-        vTaskDelete(NULL);
-    }
-
-    // Listen for client
-    if (listen(listen_sock, 1) != 0) {
-        ESP_LOGE(TAG, "Socket listening failed!");
-        close(listen_sock);
-        vTaskDelete(NULL);
-    }
+    char buffer[1024];
 
     while (1) {
-        ESP_LOGI(TAG, "Waiting for client to connect on port %d...", PORT);
-
-        // Accept a client connection
-        client_sock = accept(listen_sock, (struct sockaddr *)&client_addr, &addr_len);
+        // 2) Accept one client
+        client_sock = accept(listen_sock,
+                             (struct sockaddr *)&client_addr,
+                             &addr_len);
         if (client_sock < 0) {
-            ESP_LOGE(TAG, "Client connection failed!");
-            continue;  // Continue waiting for another client
+            ESP_LOGE(TAG, "accept failed");
+            continue;
         }
+        ESP_LOGI(TAG, "Client connected");
 
-        ESP_LOGI(TAG, "Client connected!");
-        json_buffer_index = 0;  // Reset JSON buffer for new client
+        // 3) Peek the first few bytes (no blocking beyond this)
+        int len = recv(client_sock, buffer, sizeof(buffer)-1, 0);
+        if (len <= 0) {
+            ESP_LOGE(TAG, "recv failed or closed");
+            close(client_sock);
+            continue;
+        }
+        buffer[len] = '\0';
 
-        // Communication loop
-        while (1) {
-            memset(rx_buffer, 0, sizeof(rx_buffer));  // Clear buffer
-            int len = recv(client_sock, rx_buffer, sizeof(rx_buffer) - 1, 0);
-            
-            if (len <= 0) {
-                ESP_LOGE(TAG, "Connection lost");
-                close(client_sock);
-                break;  // Break to accept a new client
-            }
-
-            rx_buffer[len] = '\0';  // Null-terminate received message
-            ESP_LOGI(TAG, "Received: %s", rx_buffer);
-
-            // Handle CAPTURE command for camera
-            if (strncmp(rx_buffer, "CAPTURE", 7) == 0) {
-                ESP_LOGI(TAG, "Capturing image...");
-
-                camera_fb_t *fb = esp_camera_fb_get();
-                if (!fb) {
-                    ESP_LOGE(TAG, "Camera capture failed");
-                    continue;
-                }
-
-                // Send image size
-                int image_size = fb->len;
-                ESP_LOGI(TAG, "Sending image of size %d bytes", image_size);
-                send(client_sock, &image_size, sizeof(image_size), 0);
-
-                // Send image data
-                send(client_sock, fb->buf, image_size, 0);
-                ESP_LOGI(TAG, "Image sent successfully");
-
+        // 4a) If it’s exactly "CAPTURE", grab & send a frame right now:
+        if (strcmp(buffer, "CAPTURE") == 0) {
+            ESP_LOGI(TAG, "CAPTURE command received");
+            camera_fb_t *fb = esp_camera_fb_get();
+            if (!fb) {
+                ESP_LOGE(TAG, "camera capture failed");
+            } else {
+                // Send size (network‐order) then data
+                int32_t sz = htonl(fb->len);
+                send(client_sock, &sz, sizeof(sz), 0);
+                send(client_sock, fb->buf, fb->len, 0);
                 esp_camera_fb_return(fb);
-            } 
-            // Handle JSON data for LED control
-            else if (strchr(rx_buffer, '{') != NULL) {
-                // Append received data to JSON buffer
-                if (json_buffer_index + len < sizeof(json_buffer)) {
-                    memcpy(json_buffer + json_buffer_index, rx_buffer, len);
-                    json_buffer_index += len;
-                } else {
-                    ESP_LOGE(TAG, "JSON buffer overflow");
-                    json_buffer_index = 0;
-                    continue;
-                }
-
-                // Check if the received data contains the end of the JSON object
-                if (strchr(rx_buffer, '}') != NULL) {
-                    // Parse JSON and extract the LED array
-                    cJSON *json = cJSON_Parse(json_buffer);
-                    if (json == NULL) {
-                        ESP_LOGE(TAG, "Failed to parse JSON");
-                        json_buffer_index = 0;
-                        continue;
-                    }
-
-                    cJSON *json_array = cJSON_GetObjectItem(json, "leds");
-                    if (!cJSON_IsArray(json_array)) {
-                        ESP_LOGE(TAG, "JSON does not contain an array");
-                        cJSON_Delete(json);
-                        json_buffer_index = 0;
-                        continue;
-                    }
-
-                    uint8_t grid[ARRAY_SIZE];
-                    int array_size = cJSON_GetArraySize(json_array);
-                    if (array_size != ARRAY_SIZE) {
-                        ESP_LOGE(TAG, "Array size mismatch");
-                        cJSON_Delete(json);
-                        json_buffer_index = 0;
-                        continue;
-                    }
-
-                    for (int i = 0; i < ARRAY_SIZE; i++) {
-                        cJSON *item = cJSON_GetArrayItem(json_array, i);
-                        if (!cJSON_IsNumber(item)) {
-                            ESP_LOGE(TAG, "Array item is not a number");
-                            cJSON_Delete(json);
-                            json_buffer_index = 0;
-                            continue;
-                        }
-                        grid[i] = (uint8_t)item->valueint;
-                    }
-
-                    cJSON_Delete(json);
-                    json_buffer_index = 0;  // Reset buffer index
-
-                    // Send the grid using NRF24L01
-                    sendGrid(grid);
-                }
+                ESP_LOGI(TAG, "Frame sent (%d bytes)", fb->len);
             }
         }
+        // 4b) Otherwise assume JSON grid: accumulate until ‘}’ and sendGrid()
+        else if (buffer[0] == '{') {
+            size_t idx = 0;
+            static char json_buf[2048];
+
+            // copy what we got
+            memcpy(json_buf, buffer, len);
+            idx += len;
+
+            // keep reading until closing brace
+            while (idx < sizeof(json_buf) - 1
+                   && !strchr(json_buf, '}')) {
+                len = recv(client_sock,
+                           json_buf + idx,
+                           sizeof(json_buf)-1 - idx,
+                           0);
+                if (len <= 0) break;
+                idx += len;
+            }
+            json_buf[idx] = '\0';
+
+            // parse & send
+            cJSON *j = cJSON_Parse(json_buf);
+            if (j) {
+                cJSON *arr = cJSON_GetObjectItem(j, "leds");
+                if (cJSON_IsArray(arr)
+                    && cJSON_GetArraySize(arr) == ARRAY_SIZE) {
+                    uint8_t grid[ARRAY_SIZE];
+                    for (int i = 0; i < ARRAY_SIZE; i++) {
+                        grid[i] = (uint8_t)
+                                  cJSON_GetArrayItem(arr,i)->valueint;
+                    }
+                    sendGrid(grid);
+                } else {
+                    ESP_LOGE(TAG, "bad JSON array");
+                }
+                cJSON_Delete(j);
+            } else {
+                ESP_LOGE(TAG, "JSON parse error");
+            }
+        }
+        else {
+            ESP_LOGW(TAG, "unknown command: %s", buffer);
+        }
+
+        // 5) Done – close and loop
+        shutdown(client_sock, SHUT_RDWR);
+        close(client_sock);
+        ESP_LOGI(TAG, "Connection closed, waiting for next");
     }
 
-    // Clean up
+    // unreachable
     close(listen_sock);
     vTaskDelete(NULL);
+}
+
+
+void sendTestGrid(){
+    uint8_t grid[ARRAY_SIZE];
+    for (int i = 0; i < ARRAY_SIZE; i++) {
+        grid[i] = (rand() % 3) + 1;
+    }
+    sendGrid(grid);
 }
 
 void app_main(void) {
@@ -433,11 +404,15 @@ void app_main(void) {
     // Initialize WiFi Access Point
     start_wifi_ap();
 
+    /*
     // Initialize camera
     if(ESP_OK != init_camera()) {
         ESP_LOGE(TAG, "Camera initialization failed");
         return;
     }
+    */
+
+    init_camera();
     
     // Initialize NRF24L01
     nrf_init();
@@ -452,7 +427,8 @@ void app_main(void) {
     
     // Keep the main task alive
     while(1) {
-        vTaskDelay(1000 / portTICK_PERIOD_MS);
+        sendTestGrid();
+        vTaskDelay(500 / portTICK_PERIOD_MS);
     }
 #else
     ESP_LOGE(TAG, "Camera support is not enabled");
