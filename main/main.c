@@ -1,44 +1,55 @@
+// Standard C libraries
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 #include <sys/param.h>
+#include <sys/types.h>
+
+// Networking libraries
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <arpa/inet.h>
+#include <unistd.h>
+
+// ESP-IDF core libraries
 #include <esp_wifi.h>
 #include <esp_event.h>
 #include <esp_log.h>
 #include <nvs_flash.h>
 #include <esp_netif.h>
-#include <inttypes.h>
+#include <esp_system.h>
+#include <esp_mac.h>
+
+// FreeRTOS libraries
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
-#include "esp_log.h"
+
+// GPIO and peripheral libraries
 #include "driver/gpio.h"
-#include "cJSON.h"
-#include <esp_system.h>
+
+// Camera and HTTP server libraries
 #include "esp_http_server.h"
 #include "esp_timer.h"
 #include "esp_camera.h"
-#include "esp_mac.h"
+
+// Additional utilities
+#include <inttypes.h>
+
+#include "mirf.h"
+#include "cJSON.h"
+
 
 // support IDF 5.x
 #ifndef portTICK_RATE_MS
 #define portTICK_RATE_MS portTICK_PERIOD_MS
 #endif
 
-// includes for networking
-#include <sys/types.h>
-#include <arpa/inet.h>
-#include <unistd.h>
-
+// Define Wifi Config
+#define TAG "ESP32_GAME4"
 #define WIFI_SSID "GAME4_ESP"
 #define WIFI_PASS "yes123456"
 #define PORT 8080  // TCP Port
-
-static const char *TAG = "ESP32_GAME4";
-
-bool first = true;
 
 // Define GPIO pin for the external interrupt
 #define INTERRUPT_PIN 40
@@ -61,8 +72,7 @@ bool first = true;
 #define CAM_PIN_D6 17
 #define CAM_PIN_D7 16
 
-#include "mirf.h"
-
+// Defie NRF Cofig
 #define CONFIG_RECEIVER 1
 #define CONFIG_RADIO_CHANNEL 99
 #define CONFIG_ADVANCED 1
@@ -71,6 +81,7 @@ bool first = true;
 #define PAYLOAD_SIZE 32
 #define ARRAY_SIZE 200
 
+// Define GPIO pin for nrf interrupt
 #define CONFIG_IRQ_GPIO GPIO_NUM_40
 
 NRF24_t dev;
@@ -80,7 +91,6 @@ typedef struct {
     size_t len;
 } jpg_chunking_t;
 
-#if ESP_CAMERA_SUPPORTED
 static camera_config_t camera_config = {
     .pin_pwdn = CAM_PIN_PWDN,
     .pin_reset = CAM_PIN_RESET,
@@ -140,7 +150,6 @@ static esp_err_t init_camera(void) {
 
     return ESP_OK;
 }
-#endif
 
 // Initialize NRF24L01 module
 void nrf_init() {
@@ -250,6 +259,15 @@ void sendGrid(uint8_t grid[ARRAY_SIZE]) {
     ESP_LOGI("NRF24", "Full array sent!");
     vTaskDelay(1 / portTICK_PERIOD_MS); // Wait before next transmission
 }
+
+void sendTestGrid(){
+    uint8_t grid[ARRAY_SIZE];
+    for (int i = 0; i < ARRAY_SIZE; i++) {
+        grid[i] = (rand() % 3) + 1;
+    }
+    sendGrid(grid);
+}
+
 
 // Initialize WiFi access point
 void start_wifi_ap() {
@@ -384,16 +402,8 @@ void tcp_server_task(void *pvParameters) {
 }
 
 
-void sendTestGrid(){
-    uint8_t grid[ARRAY_SIZE];
-    for (int i = 0; i < ARRAY_SIZE; i++) {
-        grid[i] = (rand() % 3) + 1;
-    }
-    sendGrid(grid);
-}
 
-void app_main(void) {
-#if ESP_CAMERA_SUPPORTED
+void initialize(){
     // Initialize NVS
     esp_err_t err = nvs_flash_init();
     if (err != ESP_OK) {
@@ -404,33 +414,30 @@ void app_main(void) {
     // Initialize WiFi Access Point
     start_wifi_ap();
 
-    /*
     // Initialize camera
     if(ESP_OK != init_camera()) {
         ESP_LOGE(TAG, "Camera initialization failed");
         return;
     }
-    */
 
-    init_camera();
-    
     // Initialize NRF24L01
     nrf_init();
     
     // Initialize GPIO interrupt for NRF24L01
     init_interrupt();
+
+    ESP_LOGI(TAG, "System initialized successfully");
+}
+
+void app_main(void) {
+    initialize();
     
     // Start TCP server task
     xTaskCreate(tcp_server_task, "tcp_server", 4096, NULL, 5, NULL);
-    
-    ESP_LOGI(TAG, "System initialized successfully");
     
     // Keep the main task alive
     while(1) {
         //sendTestGrid();
         vTaskDelay(500 / portTICK_PERIOD_MS);
     }
-#else
-    ESP_LOGE(TAG, "Camera support is not enabled");
-#endif
 }
