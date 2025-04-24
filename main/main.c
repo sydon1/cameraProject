@@ -131,8 +131,8 @@ static esp_err_t init_camera(void) {
         // Exposure settings
         s->set_exposure_ctrl(s, 1); // Enable auto exposure
         s->set_aec2(s, 1);          // Enable AEC algorithm
-        s->set_ae_level(s, 0);      // Exposure level (-2 to 2)
-        s->set_aec_value(s, 300);   // Manual exposure value (0-1200, lower = brighter)
+        s->set_ae_level(s, -2);      // Exposure level (-2 to 2)
+        // s->set_aec_value(s, 1200);   // Manual exposure value (0-1200, lower = brighter)
 
         // White Balance
         s->set_whitebal(s, 1);  // Enable Auto White Balance (AWB)
