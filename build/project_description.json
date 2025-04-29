@@ -1,7 +1,7 @@
 {
     "version":            "1.1",
     "project_name":       "cameraProject",
-    "project_version":    "6aac8e4-dirty",
+    "project_version":    "bcdfba3-dirty",
     "project_path":       "C:/Users/wuyts/Documents/ESP_projects/cameraProject",
     "idf_path":           "C:/Users/wuyts/esp/v5.1/esp-idf",
     "build_dir":          "C:/Users/wuyts/Documents/ESP_projects/cameraProject/build",

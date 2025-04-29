@@ -45,11 +45,15 @@
 #define portTICK_RATE_MS portTICK_PERIOD_MS
 #endif
 
+#define PORT 8080  // TCP Port
+
 // Define Wifi Config
+/*
 #define TAG "ESP32_GAME4"
 #define WIFI_SSID "GAME4_ESP"
 #define WIFI_PASS "yes123456"
-#define PORT 8080  // TCP Port
+
+*/
 
 // Define GPIO pin for the external interrupt
 #define INTERRUPT_PIN 40
@@ -83,6 +87,63 @@
 
 // Define GPIO pin for nrf interrupt
 #define CONFIG_IRQ_GPIO GPIO_NUM_40
+
+
+#include "esp_wifi.h"
+#include "esp_event.h"
+#include "esp_log.h"
+#include "esp_netif.h"
+
+#define WIFI_SSID "Willem"     // Your phone's hotspot name
+#define WIFI_PASS "Lol12345"   // Your phone's hotspot password
+#define TAG "ESP32_GAME4"
+
+static void wifi_event_handler(void* arg, esp_event_base_t event_base,
+                               int32_t event_id, void* event_data) {
+    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
+        ESP_LOGI(TAG, "WiFi started. Connecting to %s...", WIFI_SSID);
+        esp_wifi_connect();  // When WiFi starts, try to connect
+    } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
+        ESP_LOGI(TAG, "Disconnected. Trying to reconnect...");
+        esp_wifi_connect();  // Reconnect if connection drops
+    } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
+        ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
+        ESP_LOGI(TAG, "Got IP Address: " IPSTR, IP2STR(&event->ip_info.ip));
+    }
+}
+
+void start_wifi_sta() {
+    // Initialize network stack
+    ESP_ERROR_CHECK(esp_netif_init());
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
+    esp_netif_create_default_wifi_sta();  // Create STA interface
+
+    // Wi-Fi init configuration
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+
+    // Register event handlers
+    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL));
+    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &wifi_event_handler, NULL));
+
+    // Configure Wi-Fi connection
+    wifi_config_t wifi_config = {
+        .sta = {
+            .ssid = WIFI_SSID,
+            .password = WIFI_PASS,
+            .threshold.authmode = WIFI_AUTH_WPA2_PSK, // Ensure strong auth
+        },
+    };
+
+    // Set Wi-Fi mode and config
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
+    ESP_ERROR_CHECK(esp_wifi_start());
+
+    ESP_LOGI(TAG, "Wi-Fi STA started, connecting to %s...", WIFI_SSID);
+}
+
+
 
 NRF24_t dev;
 
@@ -242,6 +303,7 @@ void sendGrid(uint8_t grid[ARRAY_SIZE]) {
             printf("\n");
         }
     }
+    printf("\n");
 
     for (int i = 0; i < ARRAY_SIZE; i += PAYLOAD_SIZE) {
         // Send chunks of 32 bytes
@@ -412,7 +474,8 @@ void initialize(){
     }
     
     // Initialize WiFi Access Point
-    start_wifi_ap();
+    //start_wifi_ap();
+    start_wifi_sta();
 
     // Initialize camera
     if(ESP_OK != init_camera()) {
