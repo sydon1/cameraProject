@@ -35,6 +35,10 @@
 
 // Additional utilities
 #include <inttypes.h>
+#include "esp_wifi.h"
+#include "esp_event.h"
+#include "esp_log.h"
+#include "esp_netif.h"
 
 #include "mirf.h"
 #include "cJSON.h"
@@ -47,13 +51,7 @@
 
 #define PORT 8080  // TCP Port
 
-// Define Wifi Config
-/*
-#define TAG "ESP32_GAME4"
-#define WIFI_SSID "GAME4_ESP"
-#define WIFI_PASS "yes123456"
-
-*/
+NRF24_t dev;
 
 // Define GPIO pin for the external interrupt
 #define INTERRUPT_PIN 40
@@ -89,17 +87,18 @@
 #define CONFIG_IRQ_GPIO GPIO_NUM_40
 
 
-#include "esp_wifi.h"
-#include "esp_event.h"
-#include "esp_log.h"
-#include "esp_netif.h"
-
-#define WIFI_SSID "Willem"     // Your phone's hotspot name
-#define WIFI_PASS "Lol12345"   // Your phone's hotspot password
+#define WIFI_SSID "Willem"     
+#define WIFI_PASS "Lol12345"   
 #define TAG "ESP32_GAME4"
 
-static void wifi_event_handler(void* arg, esp_event_base_t event_base,
-                               int32_t event_id, void* event_data) {
+void sendGrid(uint8_t grid[ARRAY_SIZE]);
+
+
+
+
+// Wifi code
+// This code was initialy writen by chatGPT and then modified by us to fit our needs
+static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data) {
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
         ESP_LOGI(TAG, "WiFi started. Connecting to %s...", WIFI_SSID);
         esp_wifi_connect();  // When WiFi starts, try to connect
@@ -112,6 +111,7 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
     }
 }
 
+// Function to initialize Wi-Fi in Station mode
 void start_wifi_sta() {
     // Initialize network stack
     ESP_ERROR_CHECK(esp_netif_init());
@@ -143,199 +143,11 @@ void start_wifi_sta() {
     ESP_LOGI(TAG, "Wi-Fi STA started, connecting to %s...", WIFI_SSID);
 }
 
-
-
-NRF24_t dev;
-
-typedef struct {
-    httpd_req_t *req;
-    size_t len;
-} jpg_chunking_t;
-
-static camera_config_t camera_config = {
-    .pin_pwdn = CAM_PIN_PWDN,
-    .pin_reset = CAM_PIN_RESET,
-    .pin_xclk = CAM_PIN_XCLK,
-    .pin_sccb_sda = CAM_PIN_SIOD,
-    .pin_sccb_scl = CAM_PIN_SIOC,
-
-    .pin_d7 = CAM_PIN_D7,
-    .pin_d6 = CAM_PIN_D6,
-    .pin_d5 = CAM_PIN_D5,
-    .pin_d4 = CAM_PIN_D4,
-    .pin_d3 = CAM_PIN_D3,
-    .pin_d2 = CAM_PIN_D2,
-    .pin_d1 = CAM_PIN_D1,
-    .pin_d0 = CAM_PIN_D0,
-    .pin_vsync = CAM_PIN_VSYNC,
-    .pin_href = CAM_PIN_HREF,
-    .pin_pclk = CAM_PIN_PCLK,
-
-    .ledc_timer = LEDC_TIMER_0,
-    .ledc_channel = LEDC_CHANNEL_0,
-
-    .xclk_freq_hz = 10000000, // use 10 MHz
-    .pixel_format = PIXFORMAT_JPEG,  
-    .frame_size = FRAMESIZE_VGA,   // vga max quality = 4
-    .jpeg_quality = 4,
-    .fb_count = 1,
-    .fb_location = CAMERA_FB_IN_PSRAM,
-    .grab_mode = CAMERA_GRAB_LATEST,
-};
-
-// Initialize camera
-static esp_err_t init_camera(void) {
-    esp_err_t err = esp_camera_init(&camera_config);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Camera Init Failed");
-        return err;
-    }
-
-    // Adjust camera settings
-    sensor_t *s = esp_camera_sensor_get();
-    if (s) {
-        s->set_brightness(s, 1);   // Adjust brightness (-2 to 2)
-        s->set_contrast(s, 2);     // Adjust contrast (-2 to 2)
-        s->set_saturation(s, -1);  // Adjust saturation (-2 to 2)
-        s->set_gainceiling(s, (gainceiling_t)4);  // Adjust gain ceiling (0 to 6)
-
-        // Exposure settings
-        s->set_exposure_ctrl(s, 1); // Enable auto exposure
-        s->set_aec2(s, 1);          // Enable AEC algorithm
-        s->set_ae_level(s, 0);      // Exposure level (-2 to 2)
-        s->set_aec_value(s, 300);   // Manual exposure value (0-1200, lower = brighter)
-
-        // White Balance
-        s->set_whitebal(s, 1);  // Enable Auto White Balance (AWB)
-    }
-
-    return ESP_OK;
-}
-
-// Initialize NRF24L01 module
-void nrf_init() {
-    Nrf24_init(&dev);
-    uint8_t payload = 32;
-    uint8_t channel = CONFIG_RADIO_CHANNEL;
-    Nrf24_config(&dev, channel, payload);
-
-    esp_err_t ret = Nrf24_setTADDR(&dev, (uint8_t *) "GAME4");
-    if (ret != ESP_OK) {
-        ESP_LOGE("APP", "nrf24l01 not installed");
-        while(1) { vTaskDelay(1); }
-    }
-    ret = Nrf24_setRADDR(&dev, (uint8_t *)"GAME4");
-    if (ret != ESP_OK) {
-        ESP_LOGE(pcTaskGetName(NULL), "nrf24l01 not installed");
-        while(1) { vTaskDelay(1); }
-    }
-
-    Nrf24_setRetransmitDelay(&dev, (15 << ARD) | (15 << ARC)); 
-    Nrf24_SetSpeedDataRates(&dev, 0);
-    Nrf24_printDetails(&dev);
-
-    // Clear RX FiFo
-    uint8_t buf[32];
-    while(1) {
-        if (Nrf24_dataReady(&dev) == false) break;
-        Nrf24_getData(&dev, buf);   
-    }
-}
-
-// Queue to handle interrupt events
-static QueueHandle_t gpio_evt_queue = NULL;
-
-// Interrupt Service Routine (ISR)
-static void IRAM_ATTR gpio_isr_handler(void* arg) {
-    int pin = (int)arg;
-    xQueueSendFromISR(gpio_evt_queue, &pin, NULL);
-}
-
-// Task to handle GPIO events
-static void gpio_task(void* arg) {
-    int io_num;
-    while (1) {
-        if (xQueueReceive(gpio_evt_queue, &io_num, portMAX_DELAY)) {
-            uint8_t buf[32];
-            if (Nrf24_dataReady(&dev)) {
-                Nrf24_getData(&dev, buf);
-                ESP_EARLY_LOGI("NRF24", "Received Data: %s", buf);
-            } else {
-                ESP_EARLY_LOGW("NRF24", "IRQ Triggered but No Data Ready!");
-            }
-        }
-    }
-}
-
-// Initialize GPIO interrupt
-void init_interrupt() {
-    // Create a queue to handle interrupt events
-    gpio_evt_queue = xQueueCreate(10, sizeof(int));
-
-    // Configure GPIO 40 as input with pull-up and interrupt on falling edge
-    gpio_config_t io_conf = {
-        .pin_bit_mask = (1ULL << INTERRUPT_PIN),
-        .mode = GPIO_MODE_INPUT,
-        .pull_up_en = GPIO_PULLUP_ENABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_NEGEDGE // Falling edge interrupt
-    };
-    gpio_config(&io_conf);
-
-    // Create a task to handle interrupt events
-    xTaskCreate(gpio_task, "gpio_task", 2048, NULL, 10, NULL);
-
-    // Install ISR service
-    gpio_install_isr_service(0);
-    gpio_isr_handler_add(INTERRUPT_PIN, gpio_isr_handler, (void*)INTERRUPT_PIN);
-
-    ESP_LOGI(TAG, "GPIO interrupt initialized on GPIO %d", INTERRUPT_PIN);
-}
-
-// Send LED grid data via NRF24L01
-void sendGrid(uint8_t grid[ARRAY_SIZE]) {
-    ESP_LOGI(pcTaskGetName(NULL), "Start Sending Grid via NRF24L01");
-
-    ESP_LOGI("NRF24", "Grid content:");
-    for (int i = 0; i < ARRAY_SIZE; i++) {
-        printf("%d ", grid[i]);
-        if ((i + 1) % PAYLOAD_SIZE == 0) {
-            printf("\n");
-        }
-    }
-    printf("\n");
-
-    for (int i = 0; i < ARRAY_SIZE; i += PAYLOAD_SIZE) {
-        // Send chunks of 32 bytes
-        Nrf24_send(&dev, &grid[i]);
-
-        // Wait for sending confirmation
-        if (Nrf24_isSend(&dev, 1000)) {
-            ESP_LOGI("NRF24", "Chunk %d sent successfully", i / PAYLOAD_SIZE);
-        } else {
-            ESP_LOGW("NRF24", "Chunk %d failed", i / PAYLOAD_SIZE);
-        }
-
-        vTaskDelay(3 / portTICK_PERIOD_MS); // Small delay to avoid packet loss
-    }
-    ESP_LOGI("NRF24", "Full array sent!");
-    vTaskDelay(1 / portTICK_PERIOD_MS); // Wait before next transmission
-}
-
-void sendTestGrid(){
-    uint8_t grid[ARRAY_SIZE];
-    for (int i = 0; i < ARRAY_SIZE; i++) {
-        grid[i] = (rand() % 3) + 1;
-    }
-    sendGrid(grid);
-}
-
-
-// Initialize WiFi access point
+// Function to initialize Wi-Fi in AP mode
 void start_wifi_ap() {
     esp_netif_init();
     esp_event_loop_create_default();
-    esp_netif_create_default_wifi_ap(); // Remove the unused variable
+    esp_netif_create_default_wifi_ap(); 
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     esp_wifi_init(&cfg);
@@ -356,6 +168,11 @@ void start_wifi_ap() {
 }
 
 
+
+
+
+// TCP code
+// This code was initialy writen by chatGPT and then modified by us to fit our needs
 void tcp_server_task(void *pvParameters) {
     int listen_sock, client_sock;
     struct sockaddr_in server_addr, client_addr;
@@ -363,7 +180,6 @@ void tcp_server_task(void *pvParameters) {
 
     // 1) create & bind & listen exactly as before
     listen_sock = socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
-    // … error‐checks omitted for brevity …
     server_addr.sin_family = AF_INET;
     server_addr.sin_addr.s_addr = htonl(INADDR_ANY);
     server_addr.sin_port = htons(PORT);
@@ -465,28 +281,208 @@ void tcp_server_task(void *pvParameters) {
 
 
 
-void initialize(){
-    // Initialize NVS
-    esp_err_t err = nvs_flash_init();
+
+// Camera code
+// This code was adapted from the ESP-IDF camera example
+// https://github.com/espressif/esp32-camera/blob/master/examples/camera_web_server/main/app_camera.c
+typedef struct {
+    httpd_req_t *req;
+    size_t len;
+} jpg_chunking_t;
+
+static camera_config_t camera_config = {
+    .pin_pwdn = CAM_PIN_PWDN,
+    .pin_reset = CAM_PIN_RESET,
+    .pin_xclk = CAM_PIN_XCLK,
+    .pin_sccb_sda = CAM_PIN_SIOD,
+    .pin_sccb_scl = CAM_PIN_SIOC,
+
+    .pin_d7 = CAM_PIN_D7,
+    .pin_d6 = CAM_PIN_D6,
+    .pin_d5 = CAM_PIN_D5,
+    .pin_d4 = CAM_PIN_D4,
+    .pin_d3 = CAM_PIN_D3,
+    .pin_d2 = CAM_PIN_D2,
+    .pin_d1 = CAM_PIN_D1,
+    .pin_d0 = CAM_PIN_D0,
+    .pin_vsync = CAM_PIN_VSYNC,
+    .pin_href = CAM_PIN_HREF,
+    .pin_pclk = CAM_PIN_PCLK,
+
+    .ledc_timer = LEDC_TIMER_0,
+    .ledc_channel = LEDC_CHANNEL_0,
+
+    .xclk_freq_hz = 10000000, // use 10 MHz
+    .pixel_format = PIXFORMAT_JPEG,  
+    .frame_size = FRAMESIZE_VGA,   // vga max quality = 4
+    .jpeg_quality = 4,
+    .fb_count = 1,
+    .fb_location = CAMERA_FB_IN_PSRAM,
+    .grab_mode = CAMERA_GRAB_LATEST,
+};
+
+void init_camera() {
+    esp_err_t err = esp_camera_init(&camera_config);
     if (err != ESP_OK) {
-        ESP_ERROR_CHECK(nvs_flash_erase());
-        ESP_ERROR_CHECK(nvs_flash_init());
+        ESP_LOGE(TAG, "Camera Init Failed");
+        while(1) { vTaskDelay(1); }
     }
-    
-    // Initialize WiFi Access Point
-    //start_wifi_ap();
+
+    // Adjust camera settings
+    sensor_t *s = esp_camera_sensor_get();
+    if (s) {
+        s->set_brightness(s, 1);   // Adjust brightness (-2 to 2)
+        s->set_contrast(s, 2);     // Adjust contrast (-2 to 2)
+        s->set_saturation(s, -1);  // Adjust saturation (-2 to 2)
+        s->set_gainceiling(s, (gainceiling_t)4);  // Adjust gain ceiling (0 to 6)
+
+        // Exposure settings
+        s->set_exposure_ctrl(s, 1); // Enable auto exposure
+        s->set_aec2(s, 1);          // Enable AEC algorithm
+        s->set_ae_level(s, 0);      // Exposure level (-2 to 2)
+        s->set_aec_value(s, 300);   // Manual exposure value (0-1200, lower = brighter)
+
+        // White Balance
+        s->set_whitebal(s, 1);  // Enable Auto White Balance (AWB)
+    }
+}
+
+
+
+
+// NRF code
+// This code was adapted from the NRF24L01 library for ESP32
+void nrf_init() {
+    Nrf24_init(&dev);
+    uint8_t payload = 32;
+    uint8_t channel = CONFIG_RADIO_CHANNEL;
+    Nrf24_config(&dev, channel, payload);
+
+    esp_err_t ret = Nrf24_setTADDR(&dev, (uint8_t *) "GAME4");
+    if (ret != ESP_OK) {
+        ESP_LOGE("APP", "nrf24l01 not installed");
+        while(1) { vTaskDelay(1); }
+    }
+    ret = Nrf24_setRADDR(&dev, (uint8_t *)"GAME4");
+    if (ret != ESP_OK) {
+        ESP_LOGE(pcTaskGetName(NULL), "nrf24l01 not installed");
+        while(1) { vTaskDelay(1); }
+    }
+
+    Nrf24_setRetransmitDelay(&dev, (15 << ARD) | (15 << ARC)); 
+    Nrf24_SetSpeedDataRates(&dev, 0);
+    Nrf24_printDetails(&dev);
+
+    // Clear RX FiFo
+    uint8_t buf[32];
+    while(1) {
+        if (Nrf24_dataReady(&dev) == false) break;
+        Nrf24_getData(&dev, buf);   
+    }
+}
+
+void sendGrid(uint8_t grid[ARRAY_SIZE]) {
+    ESP_LOGI(pcTaskGetName(NULL), "Start Sending Grid via NRF24L01");
+
+    ESP_LOGI("NRF24", "Grid content:");
+    for (int i = 0; i < ARRAY_SIZE; i++) {
+        printf("%d ", grid[i]);
+        if ((i + 1) % PAYLOAD_SIZE == 0) {
+            printf("\n");
+        }
+    }
+    printf("\n");
+
+    for (int i = 0; i < ARRAY_SIZE; i += PAYLOAD_SIZE) {
+        // Send chunks of 32 bytes
+        Nrf24_send(&dev, &grid[i]);
+
+        // Wait for sending confirmation
+        if (Nrf24_isSend(&dev, 1000)) {
+            ESP_LOGI("NRF24", "Chunk %d sent successfully", i / PAYLOAD_SIZE);
+        } else {
+            ESP_LOGW("NRF24", "Chunk %d failed", i / PAYLOAD_SIZE);
+        }
+
+        vTaskDelay(3 / portTICK_PERIOD_MS); 
+    }
+    ESP_LOGI("NRF24", "Full array sent!");
+    vTaskDelay(1 / portTICK_PERIOD_MS); 
+}
+
+void sendTestGrid(){
+    uint8_t grid[ARRAY_SIZE];
+    for (int i = 0; i < ARRAY_SIZE; i++) {
+        grid[i] = (rand() % 3) + 1;
+    }
+    sendGrid(grid);
+}
+
+
+
+
+// NRF interrupt handling code
+// This code was initialy writen by chatGPT and then modified by us to fit our needs
+// Queue to handle interrupt events
+static QueueHandle_t gpio_evt_queue = NULL;
+
+static void IRAM_ATTR gpio_isr_handler(void* arg) {
+    int pin = (int)arg;
+    xQueueSendFromISR(gpio_evt_queue, &pin, NULL);
+}
+
+static void gpio_task(void* arg) {
+    int io_num;
+    while (1) {
+        if (xQueueReceive(gpio_evt_queue, &io_num, portMAX_DELAY)) {
+            uint8_t buf[32];
+            if (Nrf24_dataReady(&dev)) {
+                Nrf24_getData(&dev, buf);
+                ESP_EARLY_LOGI("NRF24", "Received Data: %s", buf);
+            } else {
+                ESP_EARLY_LOGW("NRF24", "IRQ Triggered but No Data Ready!");
+            }
+        }
+    }
+}
+
+void init_interrupt() {
+    // Create a queue to handle interrupt events
+    gpio_evt_queue = xQueueCreate(10, sizeof(int));
+
+    // Configure GPIO 40 as input with pull-up and interrupt on falling edge
+    gpio_config_t io_conf = {
+        .pin_bit_mask = (1ULL << INTERRUPT_PIN),
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_ENABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_NEGEDGE // Falling edge interrupt
+    };
+    gpio_config(&io_conf);
+
+    // Create a task to handle interrupt events
+    xTaskCreate(gpio_task, "gpio_task", 2048, NULL, 10, NULL);
+
+    // Install ISR service
+    gpio_install_isr_service(0);
+    gpio_isr_handler_add(INTERRUPT_PIN, gpio_isr_handler, (void*)INTERRUPT_PIN);
+
+    ESP_LOGI(TAG, "GPIO interrupt initialized on GPIO %d", INTERRUPT_PIN);
+}
+
+
+
+
+
+
+
+
+
+void initialize(){
+    nvs_flash_init();
     start_wifi_sta();
-
-    // Initialize camera
-    if(ESP_OK != init_camera()) {
-        ESP_LOGE(TAG, "Camera initialization failed");
-        return;
-    }
-
-    // Initialize NRF24L01
+    init_camera();
     nrf_init();
-    
-    // Initialize GPIO interrupt for NRF24L01
     init_interrupt();
 
     ESP_LOGI(TAG, "System initialized successfully");
@@ -495,12 +491,9 @@ void initialize(){
 void app_main(void) {
     initialize();
     
-    // Start TCP server task
     xTaskCreate(tcp_server_task, "tcp_server", 4096, NULL, 5, NULL);
     
-    // Keep the main task alive
     while(1) {
-        //sendTestGrid();
         vTaskDelay(500 / portTICK_PERIOD_MS);
     }
 }

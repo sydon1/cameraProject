@@ -1,3 +1,6 @@
+// ADAPTED MIRF EXAMPLE
+// ESPIDF MIRF LIBRARY: https://github.com/nopnop2002/esp-idf-mirf/tree/master 
+
 #ifndef MAIN_MIRF_H_
 #define MAIN_MIRF_H_
 

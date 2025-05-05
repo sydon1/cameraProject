@@ -1,3 +1,6 @@
+// Port of the MIRF Library for PIC18f57Q43
+// Yusuf Hussein (yusufyy2004@hotmail.com)
+
 #include <string.h>
 
 #include "freertos/FreeRTOS.h"
