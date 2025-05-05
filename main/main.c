@@ -1,17 +1,23 @@
-// Standard C libraries
+// ==========================
+// Standard C Libraries
+// ==========================
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 #include <sys/param.h>
 #include <sys/types.h>
 
-// Networking libraries
+// ==========================
+// Networking Libraries
+// ==========================
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <unistd.h>
 
-// ESP-IDF core libraries
+// ==========================
+// ESP-IDF Core Libraries
+// ==========================
 #include <esp_wifi.h>
 #include <esp_event.h>
 #include <esp_log.h>
@@ -20,45 +26,52 @@
 #include <esp_system.h>
 #include <esp_mac.h>
 
-// FreeRTOS libraries
+// ==========================
+// FreeRTOS Libraries
+// ==========================
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
 
-// GPIO and peripheral libraries
+// ==========================
+// GPIO and Peripheral Libraries
+// ==========================
 #include "driver/gpio.h"
 
-// Camera and HTTP server libraries
+// ==========================
+// Camera and HTTP Server Libraries
+// ==========================
 #include "esp_http_server.h"
 #include "esp_timer.h"
 #include "esp_camera.h"
 
-// Additional utilities
+// ==========================
+// Additional Utilities
+// ==========================
 #include <inttypes.h>
-#include "esp_wifi.h"
-#include "esp_event.h"
-#include "esp_log.h"
-#include "esp_netif.h"
-
 #include "mirf.h"
 #include "cJSON.h"
 
-
-// support IDF 5.x
+// ==========================
+// Compatibility Macros
+// ==========================
 #ifndef portTICK_RATE_MS
 #define portTICK_RATE_MS portTICK_PERIOD_MS
 #endif
 
+// ==========================
+// Constants and Definitions
+// ==========================
 #define PORT 8080  // TCP Port
 
 NRF24_t dev;
 
-// Define GPIO pin for the external interrupt
+// GPIO pin for the external interrupt
 #define INTERRUPT_PIN 40
 
-// Define the camera pins for ESP32S3
+// Camera pins for ESP32S3
 #define CAM_PIN_PWDN 38
-#define CAM_PIN_RESET -1   //software reset will be performed
+#define CAM_PIN_RESET -1   // Software reset will be performed
 #define CAM_PIN_VSYNC 6
 #define CAM_PIN_HREF 7
 #define CAM_PIN_PCLK 13
@@ -74,7 +87,7 @@ NRF24_t dev;
 #define CAM_PIN_D6 17
 #define CAM_PIN_D7 16
 
-// Defie NRF Cofig
+// NRF Configuration
 #define CONFIG_RECEIVER 1
 #define CONFIG_RADIO_CHANNEL 99
 #define CONFIG_ADVANCED 1
@@ -83,14 +96,15 @@ NRF24_t dev;
 #define PAYLOAD_SIZE 32
 #define ARRAY_SIZE 200
 
-// Define GPIO pin for nrf interrupt
+// GPIO pin for NRF interrupt
 #define CONFIG_IRQ_GPIO GPIO_NUM_40
 
-
+// Wi-Fi Configuration
 #define WIFI_SSID "Willem"     
 #define WIFI_PASS "Lol12345"   
 #define TAG "ESP32_GAME4"
 
+// Function Prototypes
 void sendGrid(uint8_t grid[ARRAY_SIZE]);
 
 
